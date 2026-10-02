@@ -1,0 +1,15 @@
+{
+  "name": "claude-free-unlimited",
+  "version": "1.0.0",
+  "description": "Personal Claude AI Chat with Auto Model Switching via OpenRouter",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
