@@ -371,6 +371,36 @@ function renderChatList() {
   });
 }
 
+async function postChat(payload) {
+  var endpoints = ['/api/chat', '/api/chat.js'];
+  var lastResult = null;
+  for (var i = 0; i < endpoints.length; i++) {
+    var ep = endpoints[i];
+    try {
+      var res = await fetch(ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      // If 404 and there's another endpoint to try, try next
+      if (res.status === 404 && i < endpoints.length - 1) {
+        continue;
+      }
+      var rawText = await res.text();
+      var data = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch(parseErr) {
+        data = { error: rawText.slice(0, 300) || ('Server returned HTTP ' + res.status) };
+      }
+      return { ok: res.ok, status: res.status, data: data };
+    } catch(err) {
+      lastResult = { ok: false, status: 0, data: { error: err.message } };
+    }
+  }
+  return lastResult || { ok: false, status: 0, data: { error: 'Failed to connect to API' } };
+}
+
 async function sendMessage() {
   var input = document.getElementById('userInput');
   var text = input.value.trim();
@@ -396,27 +426,17 @@ async function sendMessage() {
   try {
     var sel = document.getElementById('modelSelect').value;
     var preferredModel = sel === 'auto' ? null : sel;
-    var res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: conv.messages.filter(function(m){ return m.role !== 'system'; }),
-        preferredModel: preferredModel,
-        attachments: attachmentsToSend
-      })
+    var result = await postChat({
+      messages: conv.messages.filter(function(m){ return m.role !== 'system'; }),
+      preferredModel: preferredModel,
+      attachments: attachmentsToSend
     });
 
-    var rawText = await res.text();
-    var data = null;
-    try {
-      data = JSON.parse(rawText);
-    } catch(parseErr) {
-      data = { error: rawText.slice(0, 300) || ('Server returned HTTP ' + res.status) };
-    }
+    var data = result.data || {};
     typingEl.remove();
 
-    if (!res.ok || data.error) {
-      var errText = data.error || ('HTTP ' + res.status);
+    if (!result.ok || data.error) {
+      var errText = data.error || ('HTTP ' + result.status);
       showToast(data.allExhausted ? 'All Claude models rate limited. Try again soon.' : 'Error: ' + errText, data.allExhausted ? 'warning' : 'error');
       appendErrorBanner(errText);
       return;
@@ -657,19 +677,12 @@ function regenerate() {
   if (rows.length > 0) rows[rows.length-1].remove();
   saveConversations();
   var typingEl = showTyping(); setLoading(true);
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: conv.messages })
-  })
-    .then(async function(r) {
-      var text = await r.text();
-      try { return JSON.parse(text); } catch(e) { return { error: text || ('HTTP ' + r.status) }; }
-    })
-    .then(function(data) {
+  postChat({ messages: conv.messages })
+    .then(function(result) {
       typingEl.remove();
-      if (!data || data.error) {
-        appendErrorBanner(data?.error || 'Failed to regenerate response.');
+      var data = result.data || {};
+      if (!result.ok || data.error) {
+        appendErrorBanner(data.error || 'Failed to regenerate response.');
         return;
       }
       conv.messages.push({ role:'assistant', content:data.content, modelLabel:data.modelLabel });
