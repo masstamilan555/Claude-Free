@@ -233,12 +233,12 @@
       <div class="topbar-actions">
         <div class="model-selector">
           <select id="modelSelect" title="Select Claude Model">
-            <option value="auto">Auto Switch</option>
-            <option value="anthropic/claude-haiku-4-5">Claude Haiku 4.5</option>
-            <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
-            <option value="anthropic/claude-opus-4-5">Claude Opus 4.5</option>
-            <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-            <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+            <option value="auto">Auto Switch (Best Available)</option>
+            <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
+            <option value="anthropic/claude-sonnet-4.5">Claude Sonnet 4.5</option>
+            <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+            <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
+            <option value="anthropic/claude-opus-4.5">Claude Opus 4.5</option>
           </select>
         </div>
         <button class="icon-btn" title="Clear chat" onclick="clearChat()">&#x1F5D1;</button>
@@ -394,21 +394,47 @@ async function sendMessage() {
   try {
     var sel = document.getElementById('modelSelect').value;
     var preferredModel = sel === 'auto' ? null : sel;
-    var res = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ messages: conv.messages.filter(function(m){return m.role!=='system';}), preferredModel: preferredModel, attachments: attachmentsToSend }) });
-    var data = await res.json(); typingEl.remove();
-    if (!res.ok || data.error) {
-      showToast(data.allExhausted ? 'All models rate limited. Try again.' : 'Error: ' + (data.error||'Unknown'), data.allExhausted?'warning':'error');
-      appendErrorBanner(data.error || 'An error occurred.'); return;
+    var res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: conv.messages.filter(function(m){ return m.role !== 'system'; }),
+        preferredModel: preferredModel,
+        attachments: attachmentsToSend
+      })
+    });
+
+    var rawText = await res.text();
+    var data = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch(parseErr) {
+      data = { error: rawText.slice(0, 300) || ('Server returned HTTP ' + res.status) };
     }
-    if (data.switched) showToast('Switched to ' + data.modelLabel, 'warning');
+    typingEl.remove();
+
+    if (!res.ok || data.error) {
+      var errText = data.error || ('HTTP ' + res.status);
+      showToast(data.allExhausted ? 'All Claude models rate limited. Try again soon.' : 'Error: ' + errText, data.allExhausted ? 'warning' : 'error');
+      appendErrorBanner(errText);
+      return;
+    }
+    if (data.switched) showToast('Auto-switched to ' + data.modelLabel, 'warning');
     currentModel = data.modelLabel || data.model;
     document.getElementById('sidebarModelName').textContent = currentModel;
     // Update token tracker
     if (data.usage) addTokenUsage(data.usage);
-    conv.messages.push({ role:'assistant', content:data.content, modelLabel:currentModel }); saveConversations();
-    appendMessageDOM('assistant', data.content, currentModel, data.switched); scrollToBottom();
-  } catch(err) { typingEl.remove(); showToast('Network error: ' + err.message, 'error'); appendErrorBanner(err.message); }
-  finally { setLoading(false); }
+    conv.messages.push({ role:'assistant', content:data.content, modelLabel:currentModel });
+    saveConversations();
+    appendMessageDOM('assistant', data.content, currentModel, data.switched);
+    scrollToBottom();
+  } catch(err) {
+    typingEl.remove();
+    showToast('Network error: ' + err.message, 'error');
+    appendErrorBanner(err.message);
+  } finally {
+    setLoading(false);
+  }
 }
 
 function sendSuggestion(card) {
@@ -629,10 +655,32 @@ function regenerate() {
   if (rows.length > 0) rows[rows.length-1].remove();
   saveConversations();
   var typingEl = showTyping(); setLoading(true);
-  fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({messages:conv.messages}) })
-    .then(function(r){return r.json();}).then(function(data){ typingEl.remove(); if(data.error){appendErrorBanner(data.error);return;} conv.messages.push({role:'assistant',content:data.content,modelLabel:data.modelLabel}); saveConversations(); appendMessageDOM('assistant',data.content,data.modelLabel,data.switched); })
-    .catch(function(err){typingEl.remove();appendErrorBanner(err.message);})
-    .finally(function(){setLoading(false);});
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: conv.messages })
+  })
+    .then(async function(r) {
+      var text = await r.text();
+      try { return JSON.parse(text); } catch(e) { return { error: text || ('HTTP ' + r.status) }; }
+    })
+    .then(function(data) {
+      typingEl.remove();
+      if (!data || data.error) {
+        appendErrorBanner(data?.error || 'Failed to regenerate response.');
+        return;
+      }
+      conv.messages.push({ role:'assistant', content:data.content, modelLabel:data.modelLabel });
+      saveConversations();
+      appendMessageDOM('assistant', data.content, data.modelLabel, data.switched);
+    })
+    .catch(function(err) {
+      typingEl.remove();
+      appendErrorBanner(err.message);
+    })
+    .finally(function() {
+      setLoading(false);
+    });
 }
 
 function exportChat() {
