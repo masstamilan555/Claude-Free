@@ -11,6 +11,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- SheetJS for Excel/CSV parsing -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Marked.js for full Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -697,16 +699,45 @@ function copyMsgText(id, btn) {
 }
 
 function renderMarkdown(text) {
+  if (!text) return '';
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try {
+      return marked.parse(text, { breaks: true, gfm: true });
+    } catch(err) {
+      console.warn('marked.js parse fallback:', err);
+    }
+  }
   var h = escapeHtml(text);
-  h = h.replace(/`(\w*)\n?([\s\S]*?)`/g, function(_,lang,code){ return '<pre><code class="lang-'+lang+'">'+code.trim()+'</code></pre>'; });
-  h = h.replace(/([^]+)/g, '<code></code>');
-  h = h.replace(/^### (.+)$/gm,'<h3></h3>').replace(/^## (.+)$/gm,'<h2></h2>').replace(/^# (.+)$/gm,'<h1></h1>');
-  h = h.replace(/\*\*\*(.+?)\*\*\*/g,'<strong><em></em></strong>').replace(/\*\*(.+?)\*\*/g,'<strong></strong>').replace(/\*(.+?)\*/g,'<em></em>');
-  h = h.replace(/^---$/gm,'<hr>').replace(/^&gt; (.+)$/gm,'<blockquote></blockquote>');
-  h = h.replace(/((?:^[*\-] .+\n?)+)/gm, function(m){ return '<ul>'+m.trim().split('\n').map(function(l){return '<li>'+l.replace(/^[*\-] /,'')+'</li>';}).join('')+'</ul>'; });
-  h = h.replace(/((?:^\d+\. .+\n?)+)/gm, function(m){ return '<ol>'+m.trim().split('\n').map(function(l){return '<li>'+l.replace(/^\d+\. /,'')+'</li>';}).join('')+'</ol>'; });
-  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="" target="_blank" rel="noopener"></a>');
-  h = h.split(/\n\n+/).map(function(p){ p=p.trim(); if(!p)return''; if(/^<(h[1-6]|ul|ol|pre|blockquote|hr)/.test(p))return p; return '<p>'+p.replace(/\n/g,'<br>')+'</p>'; }).join('\n');
+  // Code blocks
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+    return '<pre><code class="language-' + lang + '">' + code.trim() + '</code></pre>';
+  });
+  // Inline code
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Headings
+  h = h.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+  h = h.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+  h = h.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+  // Bold & Italic
+  h = h.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Blockquotes
+  h = h.replace(/^\> (.*$)/gim, '<blockquote>$1</blockquote>');
+  // Lists
+  h = h.replace(/^\s*[-*]\s+(.*$)/gim, '<li>$1</li>');
+  h = h.replace(/(<li>.*<\/li>)/gims, '<ul>$1</ul>');
+  // Horizontal rule
+  h = h.replace(/^---$/gm, '<hr>');
+  // Links
+  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Paragraphs
+  h = h.split(/\n\n+/).map(function(p) {
+    p = p.trim();
+    if (!p) return '';
+    if (/^<(h[1-6]|ul|ol|pre|blockquote|hr)/i.test(p)) return p;
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }).join('\n');
   return h;
 }
 
