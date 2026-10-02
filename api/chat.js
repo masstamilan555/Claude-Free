@@ -1,3 +1,9 @@
+export const config = {
+  api: {
+    bodyParser: { sizeLimit: '20mb' }, // allow large base64 images
+  },
+};
+
 export default async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,7 +18,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { messages, preferredModel } = req.body;
+  const { messages, preferredModel, attachments } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'Invalid messages format' });
@@ -24,13 +30,13 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'OpenRouter API key not configured' });
   }
 
-  // Claude models on OpenRouter — ordered by preference (free/cheap first)
+  // Claude models on OpenRouter — updated Oct 2026
   const MODEL_CHAIN = [
-    { id: 'anthropic/claude-3-haiku',              label: 'Claude 3 Haiku' },
-    { id: 'anthropic/claude-3.5-haiku',            label: 'Claude 3.5 Haiku' },
-    { id: 'anthropic/claude-3.5-sonnet',           label: 'Claude 3.5 Sonnet' },
-    { id: 'anthropic/claude-3.5-sonnet:beta',      label: 'Claude 3.5 Sonnet (Beta)' },
-    { id: 'anthropic/claude-3-opus',               label: 'Claude 3 Opus' },
+    { id: 'anthropic/claude-haiku-4-5',     label: 'Claude Haiku 4.5' },
+    { id: 'anthropic/claude-sonnet-4-5',    label: 'Claude Sonnet 4.5' },
+    { id: 'anthropic/claude-opus-4-5',      label: 'Claude Opus 4.5' },
+    { id: 'anthropic/claude-3.5-sonnet',    label: 'Claude 3.5 Sonnet' },
+    { id: 'anthropic/claude-3.5-haiku',     label: 'Claude 3.5 Haiku' },
   ];
 
   // If a preferred model is passed, start from that one
@@ -41,6 +47,31 @@ export default async function handler(req, res) {
   }
 
   const modelsToTry = MODEL_CHAIN.slice(startIndex);
+
+  // Build final messages — inject attachments into last user message
+  let finalMessages = [...messages];
+  if (attachments && attachments.length > 0 && finalMessages.length > 0) {
+    const last = finalMessages[finalMessages.length - 1];
+    if (last.role === 'user') {
+      const parts = [];
+      // Text part
+      if (last.content) parts.push({ type: 'text', text: last.content });
+      // Attachment parts
+      for (const att of attachments) {
+        if (att.kind === 'image') {
+          // Vision: base64 data URL
+          parts.push({ type: 'image_url', image_url: { url: att.data } });
+        } else if (att.kind === 'text') {
+          // Document: extracted text as context
+          parts.push({ type: 'text', text: `\n\n---\n📄 File: ${att.name}\n---\n${att.data}\n---` });
+        }
+      }
+      finalMessages = [
+        ...finalMessages.slice(0, -1),
+        { role: 'user', content: parts },
+      ];
+    }
+  }
 
   let lastError = null;
 
@@ -56,7 +87,7 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model: model.id,
-          messages,
+          messages: finalMessages,
           max_tokens: 4096,
           temperature: 0.7,
         }),
@@ -71,7 +102,8 @@ export default async function handler(req, res) {
           String(errMsg).toLowerCase().includes('rate') ||
           String(errMsg).toLowerCase().includes('limit') ||
           String(errMsg).toLowerCase().includes('quota') ||
-          String(errMsg).toLowerCase().includes('exceeded');
+          String(errMsg).toLowerCase().includes('exceeded') ||
+          String(errMsg).toLowerCase().includes('deprecated');
 
         if (isRateLimit) {
           console.warn(`[${model.label}] Rate limited, trying next model...`);

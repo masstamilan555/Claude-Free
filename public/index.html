@@ -7,6 +7,10 @@
   <meta name="description" content="Personal Claude AI with auto model switching via OpenRouter" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- PDF.js for PDF text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- SheetJS for Excel/CSV parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -134,7 +138,28 @@
     /* Input */
     .input-area{padding:16px 20px 20px;background:var(--bg-base);border-top:1px solid var(--border);flex-shrink:0;}
     .input-box{max-width:760px;margin:0 auto;}
-    .input-wrapper{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-xl);display:flex;align-items:flex-end;gap:8px;padding:12px 12px 12px 18px;transition:var(--t);box-shadow:var(--shadow-sm);}
+    /* File Chips */
+    .file-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+    .file-chip{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:20px;font-size:12px;color:var(--text-secondary);max-width:200px;animation:chipIn .2s ease;}
+    @keyframes chipIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+    .file-chip-thumb{width:20px;height:20px;border-radius:4px;object-fit:cover;flex-shrink:0;}
+    .file-chip-icon{font-size:14px;flex-shrink:0;}
+    .file-chip-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;}
+    .file-chip-remove{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;flex-shrink:0;line-height:1;padding:0 0 0 2px;}
+    .file-chip-remove:hover{color:var(--red);}
+    .file-chip.image{border-color:rgba(96,165,250,.4);}
+    .file-chip.pdf{border-color:rgba(248,113,113,.4);}
+    .file-chip.excel{border-color:rgba(74,222,128,.4);}
+    .file-chip.text{border-color:var(--border-light);}
+    /* Attach button */
+    .attach-btn{width:34px;height:34px;background:none;border:none;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;border-radius:8px;transition:var(--t);flex-shrink:0;}
+    .attach-btn:hover{color:var(--text-secondary);background:rgba(255,255,255,.05);}
+    .attach-btn.has-files{color:var(--accent);}
+    /* Attachment in message */
+    .msg-attachment{margin-top:8px;}
+    .msg-attach-img{max-width:300px;max-height:200px;border-radius:8px;border:1px solid var(--border);object-fit:cover;display:block;}
+    .msg-attach-file{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-hover);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-secondary);margin-top:4px;}
+    .input-wrapper{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-xl);display:flex;align-items:flex-end;gap:4px;padding:8px 8px 8px 14px;transition:var(--t);box-shadow:var(--shadow-sm);}
     .input-wrapper:focus-within{border-color:var(--border-light);box-shadow:0 0 0 3px rgba(201,100,66,.1),var(--shadow-md);}
     #userInput{flex:1;background:none;border:none;color:var(--text-primary);font-family:inherit;font-size:14.5px;line-height:1.6;resize:none;outline:none;max-height:160px;min-height:24px;overflow-y:auto;}
     #userInput::placeholder{color:var(--text-muted);}
@@ -209,11 +234,11 @@
         <div class="model-selector">
           <select id="modelSelect" title="Select Claude Model">
             <option value="auto">Auto Switch</option>
-            <option value="anthropic/claude-3-haiku">Claude 3 Haiku</option>
-            <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+            <option value="anthropic/claude-haiku-4-5">Claude Haiku 4.5</option>
+            <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
+            <option value="anthropic/claude-opus-4-5">Claude Opus 4.5</option>
             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-            <option value="anthropic/claude-3.5-sonnet:beta">Claude 3.5 Sonnet Beta</option>
-            <option value="anthropic/claude-3-opus">Claude 3 Opus</option>
+            <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
           </select>
         </div>
         <button class="icon-btn" title="Clear chat" onclick="clearChat()">&#x1F5D1;</button>
@@ -247,13 +272,22 @@
     </div>
     <div class="input-area">
       <div class="input-box">
+        <!-- File chips preview -->
+        <div class="file-chips" id="fileChips" style="display:none"></div>
         <div class="input-wrapper">
-          <textarea id="userInput" placeholder="Message Claude..." rows="1" maxlength="32000"
+          <!-- Hidden file input -->
+          <input type="file" id="fileInput" style="display:none" multiple
+            accept="image/*,.pdf,.xlsx,.xls,.csv,.txt,.md,.json"
+            onchange="handleFileSelect(event)" />
+          <button class="attach-btn" id="attachBtn" onclick="document.getElementById('fileInput').click()" title="Attach file (Image, PDF, Excel, CSV)">
+            &#x1F4CE;
+          </button>
+          <textarea id="userInput" placeholder="Message Claude... (or attach a file)" rows="1" maxlength="32000"
             onkeydown="handleKeydown(event)" oninput="autoResize(this);updateCharCount()"></textarea>
           <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send">&#x27A4;</button>
         </div>
         <div class="input-footer">
-          <span class="input-hint">Enter to send &middot; Shift+Enter for new line</span>
+          <span class="input-hint">Enter to send &middot; Shift+Enter for new line &middot; <span style="color:var(--accent)">&#x1F4CE;</span> Attach files</span>
           <span class="char-count" id="charCount"></span>
         </div>
       </div>
@@ -266,6 +300,7 @@ var conversations = JSON.parse(localStorage.getItem('claude_conversations') || '
 var currentConvId = null;
 var isLoading = false;
 var currentModel = null;
+var pendingAttachments = []; // [{kind, name, data, mimeType, size}]
 
 window.addEventListener('DOMContentLoaded', function() {
   renderChatList();
@@ -337,7 +372,9 @@ function renderChatList() {
 async function sendMessage() {
   var input = document.getElementById('userInput');
   var text = input.value.trim();
-  if (!text || isLoading) return;
+  if (!text && !pendingAttachments.length) { showToast('Type a message or attach a file', ''); return; }
+  if (isLoading) return;
+  if (!text) text = 'Please analyse the attached file(s).';
   var welcome = document.getElementById('welcomeScreen');
   if (welcome) welcome.remove();
   var conv = getOrCreateConversation();
@@ -347,14 +384,17 @@ async function sendMessage() {
     renderChatList();
   }
   conv.messages.push({ role: 'user', content: text }); saveConversations();
-  appendMessageDOM('user', text);
+  var attachmentsToSend = pendingAttachments.slice(); // capture before clearing
+  pendingAttachments = [];
+  renderFileChips();
+  appendMessageDOM('user', text, attachmentsToSend);
   input.value = ''; input.style.height = 'auto';
   document.getElementById('charCount').textContent = '';
   var typingEl = showTyping(); setLoading(true);
   try {
     var sel = document.getElementById('modelSelect').value;
     var preferredModel = sel === 'auto' ? null : sel;
-    var res = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ messages: conv.messages.filter(function(m){return m.role!=='system';}), preferredModel: preferredModel }) });
+    var res = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ messages: conv.messages.filter(function(m){return m.role!=='system';}), preferredModel: preferredModel, attachments: attachmentsToSend }) });
     var data = await res.json(); typingEl.remove();
     if (!res.ok || data.error) {
       showToast(data.allExhausted ? 'All models rate limited. Try again.' : 'Error: ' + (data.error||'Unknown'), data.allExhausted?'warning':'error');
@@ -378,13 +418,28 @@ function sendSuggestion(card) {
 
 function handleKeydown(e) { if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); sendMessage(); } }
 
-function appendMessageDOM(role, content, modelLabel, switched) {
+function appendMessageDOM(role, content, attachmentsOrLabel, switched) {
   var container = document.getElementById('messagesContainer');
   var row = document.createElement('div');
   row.className = 'message-row ' + role;
   if (role === 'user') {
-    row.innerHTML = '<div class="message-inner"><div class="bubble">' + escapeHtml(content).replace(/\n/g,'<br>') + '</div></div>';
+    var attachments = Array.isArray(attachmentsOrLabel) ? attachmentsOrLabel : [];
+    var attHtml = '';
+    if (attachments.length > 0) {
+      attHtml = '<div class="msg-attachment">';
+      attachments.forEach(function(att) {
+        if (att.kind === 'image') {
+          attHtml += '<img class="msg-attach-img" src="' + att.data + '" alt="' + escapeHtml(att.name) + '" />';
+        } else {
+          var icon = att.kind === 'pdf' ? '&#x1F4D5;' : att.kind === 'excel' ? '&#x1F4CA;' : '&#x1F4C4;';
+          attHtml += '<div class="msg-attach-file">' + icon + ' ' + escapeHtml(att.name) + '</div>';
+        }
+      });
+      attHtml += '</div>';
+    }
+    row.innerHTML = '<div class="message-inner"><div class="bubble">' + escapeHtml(content).replace(/\n/g,'<br>') + attHtml + '</div></div>';
   } else {
+    var modelLabel = typeof attachmentsOrLabel === 'string' ? attachmentsOrLabel : '';
     var sw = switched ? '<span class="switched-badge">Auto-switched</span>' : '';
     var badge = modelLabel ? '<span class="ai-model-badge">' + escapeHtml(modelLabel) + '</span>' : '';
     var contentId = 'msg-' + Date.now();
@@ -415,6 +470,137 @@ function addCodeCopyButtons(container) {
     btn.onclick = function(){ navigator.clipboard.writeText(pre.querySelector('code')?.textContent || pre.textContent).then(function(){ btn.textContent='Copied!'; setTimeout(function(){btn.textContent='Copy';},1500); }); };
     pre.appendChild(btn);
   });
+}
+
+// ── File Upload Handler ────────────────────────────────────
+function handleFileSelect(event) {
+  var files = Array.from(event.target.files);
+  if (!files.length) return;
+  // Reset input so same file can be re-selected
+  event.target.value = '';
+
+  var MAX_SIZE = 15 * 1024 * 1024; // 15MB per file
+  files.forEach(function(file) {
+    if (file.size > MAX_SIZE) { showToast('File too large: ' + file.name + ' (max 15MB)', 'error'); return; }
+    processFile(file);
+  });
+}
+
+async function processFile(file) {
+  var name = file.name;
+  var type = file.type;
+
+  showToast('Processing: ' + name + '...', '');
+
+  try {
+    if (type.startsWith('image/')) {
+      // Image → base64 for Claude vision
+      var data = await readAsDataURL(file);
+      pendingAttachments.push({ kind: 'image', name: name, data: data, mimeType: type });
+
+    } else if (type === 'application/pdf' || name.endsWith('.pdf')) {
+      // PDF → extract text via PDF.js
+      var text = await extractPdfText(file);
+      pendingAttachments.push({ kind: 'pdf', name: name, data: text, mimeType: type });
+
+    } else if (type.includes('spreadsheet') || type.includes('excel') ||
+               name.endsWith('.xlsx') || name.endsWith('.xls')) {
+      // Excel → extract text via SheetJS
+      var text = await extractExcelText(file);
+      pendingAttachments.push({ kind: 'excel', name: name, data: text, mimeType: type });
+
+    } else if (type === 'text/csv' || name.endsWith('.csv')) {
+      // CSV → read as plain text
+      var text = await readAsText(file);
+      pendingAttachments.push({ kind: 'excel', name: name, data: text, mimeType: type });
+
+    } else {
+      // Plain text, JSON, Markdown, etc.
+      var text = await readAsText(file);
+      pendingAttachments.push({ kind: 'text', name: name, data: text, mimeType: type });
+    }
+
+    renderFileChips();
+    showToast('Attached: ' + name, 'success');
+  } catch(err) {
+    showToast('Failed to read: ' + name, 'error');
+    console.error('File processing error:', err);
+  }
+}
+
+function readAsDataURL(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(e) { resolve(e.target.result); };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function readAsText(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(e) { resolve(e.target.result); };
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+async function extractPdfText(file) {
+  if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  var arrayBuffer = await file.arrayBuffer();
+  var pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  var texts = [];
+  for (var i = 1; i <= Math.min(pdf.numPages, 50); i++) {
+    var page = await pdf.getPage(i);
+    var content = await page.getTextContent();
+    texts.push('--- Page ' + i + ' ---\n' + content.items.map(function(s){ return s.str; }).join(' '));
+  }
+  return texts.join('\n\n');
+}
+
+async function extractExcelText(file) {
+  if (typeof XLSX === 'undefined') throw new Error('SheetJS not loaded');
+  var arrayBuffer = await file.arrayBuffer();
+  var workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  var result = [];
+  workbook.SheetNames.forEach(function(sheetName) {
+    var sheet = workbook.Sheets[sheetName];
+    var csv = XLSX.utils.sheet_to_csv(sheet);
+    result.push('=== Sheet: ' + sheetName + ' ===\n' + csv);
+  });
+  return result.join('\n\n');
+}
+
+function renderFileChips() {
+  var container = document.getElementById('fileChips');
+  var attachBtn = document.getElementById('attachBtn');
+  if (!pendingAttachments.length) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    attachBtn.classList.remove('has-files');
+    return;
+  }
+  container.style.display = 'flex';
+  attachBtn.classList.add('has-files');
+  container.innerHTML = '';
+  pendingAttachments.forEach(function(att, idx) {
+    var chip = document.createElement('div');
+    chip.className = 'file-chip ' + att.kind;
+    var iconOrThumb = att.kind === 'image'
+      ? '<img class="file-chip-thumb" src="' + att.data + '" alt="" />'
+      : '<span class="file-chip-icon">' + (att.kind==='pdf'?'&#x1F4D5;':att.kind==='excel'?'&#x1F4CA;':'&#x1F4C4;') + '</span>';
+    chip.innerHTML = iconOrThumb +
+      '<span class="file-chip-name" title="' + escapeHtml(att.name) + '">' + escapeHtml(att.name) + '</span>' +
+      '<button class="file-chip-remove" onclick="removeAttachment(' + idx + ')" title="Remove">&#x2715;</button>';
+    container.appendChild(chip);
+  });
+}
+
+function removeAttachment(idx) {
+  pendingAttachments.splice(idx, 1);
+  renderFileChips();
 }
 
 function setLoading(state) {
